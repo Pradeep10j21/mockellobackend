@@ -6,7 +6,7 @@ import os
 # Prefer loading a local backend/.env for development (do NOT commit real keys)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+
 from contextlib import asynccontextmanager
 from backend.routers import student, college, company, admin
 
@@ -63,40 +63,15 @@ from backend.routers import interview_room
 app.include_router(interview_room.router)
 
 @app.get("/")
-def read_root():
-    return FileResponse("dist/index.html")
+def root():
+    return {
+        "status": "Backend running",
+        "service": "mockello-api"
+    }
 
-from fastapi.staticfiles import StaticFiles
-
-# Mount assets folder (Vite build output)
-if os.path.exists("dist/assets"):
-    app.mount("/assets", StaticFiles(directory="dist/assets"), name="assets")
-
-# Catch-all for SPA routing - must be last
-@app.get("/{full_path:path}")
-async def serve_react_app(full_path: str):
-    # Check if file exists in dist (e.g. manifest.json, other root files)
-    file_path = f"dist/{full_path}"
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        return FileResponse(file_path)
-    # Otherwise return index.html for React Router
-    return FileResponse("dist/index.html")
-
-
-@app.get("/favicon.ico")
-def favicon():
-    # Serve the frontend favicon/logo so requests to backend favicon don't 404
-    candidates = []
-    # package-relative: project_root/public/logo.png
-    candidates.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "public", "logo.png")))
-    # cwd-relative: <cwd>/public/logo.png (useful when server started from project root)
-    candidates.append(os.path.abspath(os.path.join(os.getcwd(), "public", "logo.png")))
-
-    for p in candidates:
-        if os.path.exists(p):
-            return FileResponse(p)
-
-    return {"detail": "not found"}
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
 
 @app.get("/fix-login")
 def fix_login():
