@@ -35,6 +35,7 @@ origins = [
     "http://localhost:8081",
     "http://localhost:8082",
     "https://mock-brown-one.vercel.app",
+    "https://mockello-s14k.vercel.app", # Frontend deployment URL
     "*" # Allow all for MVP
 ]
 
