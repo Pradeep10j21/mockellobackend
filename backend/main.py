@@ -34,6 +34,7 @@ origins = [
     "http://localhost:8080",
     "http://localhost:8081",
     "http://localhost:8082",
+    "https://mock-brown-one.vercel.app",
     "*" # Allow all for MVP
 ]
 
@@ -61,6 +62,21 @@ app.include_router(techprep.router)
 
 from backend.routers import interview_room
 app.include_router(interview_room.router)
+
+from backend.routers import scores
+app.include_router(scores.router)
+
+from backend.routers import technical_interview
+app.include_router(technical_interview.router)
+
+from backend.routers import gd_session
+app.include_router(gd_session.router)
+
+from backend.routers import gd_transcript
+app.include_router(gd_transcript.router)
+
+from backend.routers import gd_evaluation
+app.include_router(gd_evaluation.router)
 
 @app.get("/")
 def root():

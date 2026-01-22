@@ -10,114 +10,99 @@ router = APIRouter(
     tags=["ai-interviewer"]
 )
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "<REDACTED>")
+import uuid
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+# Pool of keys from environment
+AI_API_KEYS = os.getenv("AI_API_KEYS", "") or GROQ_API_KEY
+keys = [k.strip() for k in AI_API_KEYS.split(",") if k.strip()]
+
+def get_rotated_key():
+    if not keys: return GROQ_API_KEY
+    return random.choice(keys)
 
 @router.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     print(f"[Backend] Received audio file: {file.filename}, Content-Type: {file.content_type}")
     
-    # 1. Save locally for debug/inspection
-    debug_filename = f"debug_last_audio_{file.filename}"
+    file_id = str(uuid.uuid4())
+    debug_filename = f"temp_audio_{file_id}_{file.filename}"
+    
     try:
         with open(debug_filename, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
         file_size = os.path.getsize(debug_filename)
-        print(f"[Backend] Saved {debug_filename} ({file_size} bytes)")
-        
         if file_size == 0:
+            if os.path.exists(debug_filename):
+                os.remove(debug_filename)
             raise HTTPException(status_code=400, detail="Empty audio file received")
 
-    except Exception as e:
-        print(f"[Backend] File save error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
-
-    # 2. Send to Groq
-    url = "https://api.groq.com/openai/v1/audio/transcriptions"
-    
-    try:
-        # Re-open the saved file to send it
-        with open(debug_filename, "rb") as f:
-            files = {
-                'file': (file.filename, f, file.content_type)
-            }
-            data = {
-                'model': 'whisper-large-v3',
-                'language': 'en',
-                'response_format': 'json'
-            }
-            headers = {
-                'Authorization': f'Bearer {GROQ_API_KEY}'
-            }
-            
-            print("[Backend] Sending request to Groq...")
-            response = requests.post(url, headers=headers, files=files, data=data)
-            
-            if response.status_code != 200:
-                print(f"[Backend] Groq Error Status: {response.status_code}")
-                print(f"[Backend] Groq Error Body: {response.text}")
-                
-                # Log detailed error to file
-                with open("groq_error.log", "w") as f:
-                    f.write(response.text)
-                    
-                raise HTTPException(status_code=response.status_code, detail=f"Groq API Error: {response.text}")
-            
-            result = response.json()
-            print(f"[Backend] Success! Text: {result.get('text', '')[:50]}...")
-            return {"text": result.get('text', '')}
-
-    except HTTPException as he:
-        # Re-raise HTTP exceptions (like the 400 from Groq) without wrapping them
-        raise he
-    except Exception as e:
-        import traceback
-        error_trace = traceback.format_exc()
-        print(f"[Backend] Request Exception: {e}")
-        print(f"[Backend] Traceback: {error_trace}")
+        url = "https://api.groq.com/openai/v1/audio/transcriptions"
         
-        # Write to file for debugging
-        with open("backend_error.log", "w") as f:
-            f.write(f"Error: {e}\nTraceback:\n{error_trace}")
-            
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        def call_groq():
+            api_key = get_rotated_key()
+            with open(debug_filename, "rb") as f:
+                files = {'file': (file.filename, f, file.content_type)}
+                data = {
+                    'model': 'whisper-large-v3',
+                    'language': 'en',
+                    'response_format': 'json'
+                }
+                headers = {'Authorization': f'Bearer {api_key}'}
+                return requests.post(url, headers=headers, files=files, data=data)
+
+        print("[Backend] Sending request to Groq...")
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(executor, call_groq)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=f"Groq API Error: {response.text}")
+        
+        result = response.json()
+        return {"text": result.get('text', '')}
+
+    except Exception as e:
+        print(f"[Backend] Transcription error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if os.path.exists(debug_filename):
+            try:
+                os.remove(debug_filename)
+            except:
+                pass
 
 @router.post("/chat")
 async def chat_completion(payload: dict):
-    print(f"[Backend] Received chat request for model: {payload.get('model', 'unspecified')}")
-    
     url = "https://api.groq.com/openai/v1/chat/completions"
-    
-    # Force use of specific model if requested by user (llama-3.3-70b-versatile)
-    # The user mentioned "llama 3.5 b versatile", which likely maps to llama-3.3-70b-versatile or llama-3.1-70b-versatile
     model = payload.get("model", "llama-3.3-70b-versatile")
     
     try:
-        headers = {
-            'Authorization': f'Bearer {GROQ_API_KEY}',
-            'Content-Type': 'application/json'
-        }
-        
-        groq_payload = {
-            "model": model,
-            "messages": payload.get("messages", []),
-            "temperature": payload.get("temperature", 0.7),
-            "max_tokens": payload.get("max_tokens", 1024),
-            "top_p": payload.get("top_p", 1),
-            "stream": False
-        }
-        
-        print(f"[Backend] Sending chat request to Groq ({model})...")
-        response = requests.post(url, headers=headers, json=groq_payload)
+        def call_chat():
+            api_key = get_rotated_key()
+            headers = {
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json'
+            }
+            groq_payload = {
+                "model": model,
+                "messages": payload.get("messages", []),
+                "temperature": payload.get("temperature", 0.7),
+                "max_tokens": payload.get("max_tokens", 1024),
+            }
+            return requests.post(url, headers=headers, json=groq_payload)
+
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(executor, call_chat)
         
         if response.status_code != 200:
-            print(f"[Backend] Groq Chat Error: {response.status_code} - {response.text}")
             raise HTTPException(status_code=response.status_code, detail=f"Groq API Error: {response.text}")
             
         return response.json()
 
-    except HTTPException as he:
-        raise he
     except Exception as e:
         print(f"[Backend] Chat Exception: {e}")
-        raise HTTPException(status_code=500, detail=f"Chat completion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
